@@ -782,64 +782,103 @@ async function refreshData() {
    컬럼 순서는 실제 스프레드시트에 맞게 조정하세요.
    ══════════════════════════════════════════════════ */
 function parseSheetRows(rows) {
-  // 컬럼 매핑 (실제 스프레드시트 기준, B열=빈칸 포함)
-  // A=0:종목명 B=1:빈칸 C=2:상장구분 D=3:수예시작 E=4:수예종료
-  // F=5:상장일 G=6:오버행 H=7:시총상단 I=8:밴드하단 J=9:밴드상단
-  // K=10:공모규모 L=11:주관사 M=12:긍정 N=13:부정
-  // O=14:내부평가 P=15:텔레그램점수 Q=16:신청수량 R=17:신청가격
-  // S=18:확약 T=19:확약후매도일 U=20:예상배정금 V=21:예상배정비율
-  // W=22:실배정수량 X=23:공모가 Y=24:배정금액 Z=25:배정비율
-  // AA=26:배정피드백 AB=27:매도전략 AC=28:예상시초가상승률
-  // AD=29:매도가격 AE=30:실제수익금 AF=31:실제수익률 AG=32:매도일
-  // AH=33:DR일정 AJ=34:DR구분 AK=35:미확약 AL=36:15일
-  // AM=37:1개월 AN=38:3개월 AO=39:6개월 AP=40:합계
+  // ════ 실제 Google Sheets 컬럼 매핑 (0-based) ════
+  // A=0 : 종목명
+  // B=1 : 상장구분 (시장)
+  // C=2 : 수요예측 시작일
+  // D=3 : 수요예측 종료일
+  // E=4 : 상장일
+  // F=5 : 오버행(%)
+  // G=6 : 시가총액 상단(억원)
+  // H=7 : 밴드하단
+  // I=8 : 밴드상단
+  // J=9 : 공모규모 상단(억원)
+  // K=10: 주관사
+  // L=11: 긍정(thesis)
+  // M=12: 부정(negatives)
+  // N=13: 내부평가 점수
+  // O=14: 텔레그램 점수 (greenScore)
+  // P=15: 신청수량
+  // Q=16: 신청가격
+  // R=17: 확약
+  // S=18: 확약 후 매도가능일
+  // T=19: 예상 배정금액
+  // U=20: 예상 배정비율
+  // V=21: 실배정수량 (allocShares)
+  // W=22: 공모가 (offerPrice)
+  // X=23: 배정금액(원) (allocAmt)
+  // Y=24: 배정비율 (allocPct)
+  // Z=25: 배정 피드백
+  // AA=26: 매도전략
+  // AB=27: 예상 시초가 상승률
+  // AC=28: 매도가격
+  // AD=29: 실제 수익금 (realProfit)
+  // AE=30: 실제 수익률% (realReturn)
+  // AF=31: 매도일 (sellDate)
+  // AG=32: DR일정
+  // AH=33: DR구분 (drType)  ← AI열 없음, AH 다음 AJ
+  // AI 열 없음 (스프레드시트에서 AH→AJ로 건너뜀)
+  // AJ=34: 해외 의무보유확약 미확약
+  // AK=35: 15일
+  // AL=36: 1개월
+  // AM=37: 3개월
+  // AN=38: 6개월
+  // AO=39: 합계
   return rows.map(r => {
     const n = (i) => {
       const v = r[i];
       if (!v || v === 'NA' || v === '' || v === '#REF!' || v === '#N/A') return null;
-      const cleaned = String(v).replace(/[,%₩원억만원]/g,'').replace(/,/g,'').trim();
+      const cleaned = String(v).replace(/[,%₩원억만]/g,'').replace(/,/g,'').trim();
       const num = parseFloat(cleaned);
       return isNaN(num) ? null : num;
     };
     const s = (i) => (r[i] || '').trim();
+
     // 시장구분 정규화
-    const rawMarket = s(2);
+    const rawMarket = s(1);
     let market = rawMarket;
     if (rawMarket.includes('유가') || rawMarket === '유가증권') market = '유가';
     else if (rawMarket.includes('코스닥')) market = '코스닥';
     else if (rawMarket.includes('코스피')) market = '코스피';
-    // 확약 정규화
-    const rawConfirm = s(18);
+
+    // 확약 정규화 (R열=17: "full" / "NA" / "" / "미확약")
+    const rawConfirm = s(17);
     let confirm = rawConfirm;
-    if (rawConfirm === 'full' || rawConfirm === 'Full') confirm = 'full';
-    else if (rawConfirm === '' || rawConfirm === 'NA') confirm = '미확약';
-    // 해외의무보유확약
-    const foConfirmed = n(35), fod15 = n(36), fom1 = n(37), fom3 = n(38), fom6 = n(39), foTotal = n(40);
+    if (rawConfirm === 'full' || rawConfirm === 'Full' || rawConfirm === 'FULL') confirm = 'full';
+    else if (!rawConfirm || rawConfirm === 'NA' || rawConfirm === '') confirm = '미확약';
+
+    // DR구분: AG열(32)이 DR일정, AH열(33)이 DR구분
+    // 실제 API 응답에서는 AI열이 없어 AJ가 인덱스 34
+    const drType = s(33);
+
+    // 해외의무보유확약 (AJ=34 부터)
+    const foConfirmed = n(34), fod15 = n(35), fom1 = n(36), fom3 = n(37), fom6 = n(38), foTotal = n(39);
     const fo = (foConfirmed !== null || fod15 !== null || foTotal !== null) ? {
       confirmed: foConfirmed, d15: fod15, m1: fom1, m3: fom3, m6: fom6, total: foTotal
     } : null;
+
     return {
       name:          s(0),
       market:        market,
-      listDate:      s(5),
-      growth:        n(6),
-      bandLow:       n(8),
-      bandHigh:      n(9),
-      offerPrice:    n(23),
-      internalScore: n(14),
-      greenScore:    n(15),
+      listDate:      s(4),   // E열
+      growth:        n(5),   // F열 오버행
+      bandLow:       n(7),   // H열
+      bandHigh:      n(8),   // I열
+      offerPrice:    n(22),  // W열 공모가
+      internalScore: n(13),  // N열
+      greenScore:    n(14),  // O열
       confirm:       confirm,
-      drType:        s(34),
-      appliedShares: n(16),
-      allocShares:   n(22),
-      allocAmt:      n(24),
-      allocPct:      n(25),
-      realReturn:    n(31),
-      realProfit:    n(30),
-      sellDate:      s(32),
-      thesis:        s(12),
-      negatives:     s(13),
-      sellStrategy:  s(27),
+      drType:        drType,
+      appliedShares: n(15),  // P열 신청수량
+      allocShares:   n(21),  // V열 실배정수량
+      allocAmt:      n(23),  // X열 배정금액
+      allocPct:      n(24),  // Y열 배정비율
+      realReturn:    n(30),  // AE열 실제수익률
+      realProfit:    n(29),  // AD열 실제수익금
+      sellDate:      s(31),  // AF열 매도일
+      thesis:        s(11),  // L열 긍정
+      negatives:     s(12),  // M열 부정
+      sellStrategy:  s(26),  // AA열 매도전략
       fo:            fo,
     };
   }).filter(d => d.name && d.name !== '2026년' && d.name !== '');
