@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -653,17 +652,17 @@ const CONFIG = {
   // ▼ Google Sheets 설정
   // 1. 스프레드시트를 "링크가 있는 모든 사용자" 보기로 공유
   // 2. 아래 SHEET_ID를 실제 ID로 교체
-  SHEET_ID: '1CxaoZym2_YglMSYn08VTvzMJh2Uu-F_bFWx6JP-3Ee8',
+  SHEET_ID: '1YLltN7ODMxzcMdsJ-K7J6sDmCJv8TDkWSmG2h2F6sQs',
   // 3. Google Cloud Console에서 Sheets API 활성화 후 API Key 입력
-  API_KEY:  'AIzaSyCnMaxv0wB4W14P6qfUG0PCn9dRper7ktQ',   // ← 실제 API Key로 교체
-  SHEET_RANGE: 'Sheet1!A2:AO100',    // ← 실제 시트명/범위로 교체
+  API_KEY:  'AIzaSyCnMaxv0wB4W14P6qfUG0PCn9dRper7ktQ',
+  SHEET_RANGE: '한국_청약전략!A2:AP100',    // ← 실제 시트명/범위로 교체
   REFRESH_MS: 300000,                // 5분마다 자동 갱신
 
   // ▼ 패스워드 (해시 없이 단순 비교 — 필요 시 SHA-256으로 교체)
   PASSWORD: 'Klover2025!',
 
   // ▼ 오프라인/개발용 fallback 데이터 사용 여부 (API Key 없을 때 true)
-  USE_FALLBACK: true,
+  USE_FALLBACK: false,
 };
 
 /* ══════════════════════════════════════════════════
@@ -783,33 +782,67 @@ async function refreshData() {
    컬럼 순서는 실제 스프레드시트에 맞게 조정하세요.
    ══════════════════════════════════════════════════ */
 function parseSheetRows(rows) {
+  // 컬럼 매핑 (실제 스프레드시트 기준, B열=빈칸 포함)
+  // A=0:종목명 B=1:빈칸 C=2:상장구분 D=3:수예시작 E=4:수예종료
+  // F=5:상장일 G=6:오버행 H=7:시총상단 I=8:밴드하단 J=9:밴드상단
+  // K=10:공모규모 L=11:주관사 M=12:긍정 N=13:부정
+  // O=14:내부평가 P=15:텔레그램점수 Q=16:신청수량 R=17:신청가격
+  // S=18:확약 T=19:확약후매도일 U=20:예상배정금 V=21:예상배정비율
+  // W=22:실배정수량 X=23:공모가 Y=24:배정금액 Z=25:배정비율
+  // AA=26:배정피드백 AB=27:매도전략 AC=28:예상시초가상승률
+  // AD=29:매도가격 AE=30:실제수익금 AF=31:실제수익률 AG=32:매도일
+  // AH=33:DR일정 AJ=34:DR구분 AK=35:미확약 AL=36:15일
+  // AM=37:1개월 AN=38:3개월 AO=39:6개월 AP=40:합계
   return rows.map(r => {
-    const n = (i) => { const v = r[i]; return v && v!=='NA' && v!=='' ? parseFloat(v.replace(/[,%₩원]/g,'').replace(/,/g,'')) : null; };
-    const s = (i) => (r[i] || '').trim();
-    return {
-      name:         s(0),
-      market:       s(1),
-      listDate:     s(4),
-      growth:       n(5),
-      bandLow:      n(6),
-      bandHigh:     n(7),
-      offerPrice:   n(9),
-      internalScore: n(14),
-      greenScore:   n(15),
-      confirm:      s(17),
-      drType:       s(21),
-      appliedShares: n(19),
-      allocShares:  n(23),
-      allocAmt:     n(24),
-      allocPct:     n(25),
-      realReturn:   n(26),   // 실제수익률 %
-      realProfit:   n(27),   // 실제수익금 KRW
-      sellDate:     s(28),
-      thesis:       s(11),
-      negatives:    s(12),
-      fo: null,
+    const n = (i) => {
+      const v = r[i];
+      if (!v || v === 'NA' || v === '' || v === '#REF!' || v === '#N/A') return null;
+      const cleaned = String(v).replace(/[,%₩원억만원]/g,'').replace(/,/g,'').trim();
+      const num = parseFloat(cleaned);
+      return isNaN(num) ? null : num;
     };
-  }).filter(d => d.name);
+    const s = (i) => (r[i] || '').trim();
+    // 시장구분 정규화
+    const rawMarket = s(2);
+    let market = rawMarket;
+    if (rawMarket.includes('유가') || rawMarket === '유가증권') market = '유가';
+    else if (rawMarket.includes('코스닥')) market = '코스닥';
+    else if (rawMarket.includes('코스피')) market = '코스피';
+    // 확약 정규화
+    const rawConfirm = s(18);
+    let confirm = rawConfirm;
+    if (rawConfirm === 'full' || rawConfirm === 'Full') confirm = 'full';
+    else if (rawConfirm === '' || rawConfirm === 'NA') confirm = '미확약';
+    // 해외의무보유확약
+    const foConfirmed = n(35), fod15 = n(36), fom1 = n(37), fom3 = n(38), fom6 = n(39), foTotal = n(40);
+    const fo = (foConfirmed !== null || fod15 !== null || foTotal !== null) ? {
+      confirmed: foConfirmed, d15: fod15, m1: fom1, m3: fom3, m6: fom6, total: foTotal
+    } : null;
+    return {
+      name:          s(0),
+      market:        market,
+      listDate:      s(5),
+      growth:        n(6),
+      bandLow:       n(8),
+      bandHigh:      n(9),
+      offerPrice:    n(23),
+      internalScore: n(14),
+      greenScore:    n(15),
+      confirm:       confirm,
+      drType:        s(34),
+      appliedShares: n(16),
+      allocShares:   n(22),
+      allocAmt:      n(24),
+      allocPct:      n(25),
+      realReturn:    n(31),
+      realProfit:    n(30),
+      sellDate:      s(32),
+      thesis:        s(12),
+      negatives:     s(13),
+      sellStrategy:  s(27),
+      fo:            fo,
+    };
+  }).filter(d => d.name && d.name !== '2026년' && d.name !== '');
 }
 
 /* ══════════════════════════════════════════════════
